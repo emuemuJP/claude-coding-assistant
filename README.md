@@ -53,10 +53,11 @@ Claude Codeでコードレビューを自動化するプラグインです。
 
 ## 🔧 MCP サーバー設定
 
-このプラグインはCodex MCPサーバを使用します。設定は`.claude/config.mdcp`に含まれています。
+このプラグインはCodex MCPサーバを使用します。設定は`.claude-plugin/plugin.json`に含まれています。
 
 ```json
 {
+  "name": "coding-assistant",
   "mcpServers": {
     "codex": {
       "type": "stdio",
@@ -70,6 +71,7 @@ Claude Codeでコードレビューを自動化するプラグインです。
 ### 前提条件
 - `codex`コマンドがインストール済みであること
 - インストール方法: [Codex公式ドキュメント](https://docs.codexmcp.dev/)
+- プラグインのMCPサーバーを有効にするには **Claude Codeの再起動が必要** です
 
 ---
 
@@ -77,10 +79,8 @@ Claude Codeでコードレビューを自動化するプラグインです。
 
 ```
 claude-coding-assistant/
-├── .claude/
-│   └── config.mdcp          # MCP サーバー設定
 ├── .claude-plugin/
-│   ├── plugin.json          # プラグイン設定
+│   ├── plugin.json          # プラグイン設定（MCP設定含む）
 │   └── marketplace.json     # マーケットプレイス設定
 ├── commands/
 │   └── code-reviewer.md     # コードレビューコマンド定義

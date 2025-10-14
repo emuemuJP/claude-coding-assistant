@@ -5,5 +5,12 @@
   "author": {
     "name": "からあげ",
     "email": "you@example.com"
+  },
+  "mcpServers": {
+    "codex": {
+      "type": "stdio",
+      "command": "codex",
+      "args": ["mcp"]
+    }
   }
 }

@@ -14,7 +14,7 @@ Claude Codeでコードレビューを自動化するプラグインです。
 
 ### 1. マーケットプレイスを追加
 ```
-/plugin marketplace add karaage0703/claude-coding-assistant
+/plugin marketplace add https://github.com/karaage0703/claude-coding-assistant 
 ```
 
 ### 2. プラグインをインストール

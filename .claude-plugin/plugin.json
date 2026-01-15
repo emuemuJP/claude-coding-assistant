@@ -6,6 +6,18 @@
     "name": "からあげ",
     "email": "you@example.com"
   },
+  "commands": [
+    {
+      "name": "code-reviewer",
+      "description": "プルリクエストのコード変更内容をレビュー",
+      "path": "commands/code-reviewer.md"
+    },
+    {
+      "name": "pr-description-reviewer",
+      "description": "プルリクエストの記載内容（タイトル・説明文）をレビュー",
+      "path": "commands/pr-description-reviewer.md"
+    }
+  ],
   "mcpServers": {
     "codex": {
       "type": "stdio",

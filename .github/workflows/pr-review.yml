@@ -140,8 +140,11 @@ jobs:
             cat /tmp/pr_diff.txt
           } > /tmp/full_prompt.txt
 
-          # Claude CLIでレビューを実行（標準入力を使用してコマンドインジェクションを防止）
-          if ! cat /tmp/full_prompt.txt | claude --print -p - > /tmp/review_result.txt 2>&1; then
+          # Claude CLIでレビューを実行
+          # 環境変数に格納してからダブルクォートで渡すことで、
+          # ファイル内容の二重展開を防止（コマンドインジェクション対策）
+          PROMPT=$(cat /tmp/full_prompt.txt)
+          if ! claude --print "$PROMPT" > /tmp/review_result.txt 2>&1; then
             echo "::error::Claude CLI failed to execute review"
             echo "Error output:"
             cat /tmp/review_result.txt

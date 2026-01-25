@@ -8,6 +8,11 @@
   },
   "commands": [
     {
+      "name": "pr-reviewer",
+      "description": "PRの一括レビュー（記載・コード・ドキュメントを統合）",
+      "path": "commands/pr-reviewer.md"
+    },
+    {
       "name": "code-reviewer",
       "description": "プルリクエストのコード変更内容をレビュー",
       "path": "commands/code-reviewer.md"
@@ -16,6 +21,11 @@
       "name": "pr-description-reviewer",
       "description": "プルリクエストの記載内容（タイトル・説明文）をレビュー",
       "path": "commands/pr-description-reviewer.md"
+    },
+    {
+      "name": "doc-reviewer",
+      "description": "技術文章（README等）の品質をレビュー",
+      "path": "commands/doc-reviewer.md"
     }
   ],
   "mcpServers": {

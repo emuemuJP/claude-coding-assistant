@@ -38,7 +38,7 @@ jobs:
       - name: Install Claude Code CLI
         # バージョンを固定することで破壊的変更を防止
         # 最新バージョンは https://www.npmjs.com/package/@anthropic-ai/claude-code で確認
-        run: npm install -g @anthropic-ai/claude-code
+        run: npm install -g @anthropic-ai/claude-code@1.0.3
 
       - name: Get PR information
         env:
@@ -178,21 +178,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          DIFF_LINES: ${{ steps.check-size.outputs.diff_lines }}
+          DIFF_SIZE: ${{ steps.check-size.outputs.diff_size }}
+          FILE_COUNT: ${{ steps.check-size.outputs.file_count }}
         run: |
-          cat > /tmp/skip_notice.txt << EOF
+          cat > /tmp/skip_notice.txt << 'EOF'
           ## Claude Code によるPRレビュー
 
           このPRは差分が大きすぎるため、自動レビューをスキップしました。
-
-          - 差分行数: ${{ steps.check-size.outputs.diff_lines }}行（上限: 10,000行）
-          - 差分サイズ: ${{ steps.check-size.outputs.diff_size }}バイト（上限: 500KB）
-          - 変更ファイル数: ${{ steps.check-size.outputs.file_count }}ファイル
-
-          手動でレビューを実行してください。
-
-          ---
-          *このメッセージはClaude Codeによって自動生成されました*
           EOF
+
+          echo "" >> /tmp/skip_notice.txt
+          echo "- 差分行数: ${DIFF_LINES}行（上限: 10,000行）" >> /tmp/skip_notice.txt
+          echo "- 差分サイズ: ${DIFF_SIZE}バイト（上限: 500KB）" >> /tmp/skip_notice.txt
+          echo "- 変更ファイル数: ${FILE_COUNT}ファイル" >> /tmp/skip_notice.txt
+          echo "" >> /tmp/skip_notice.txt
+          echo "手動でレビューを実行してください。" >> /tmp/skip_notice.txt
+          echo "" >> /tmp/skip_notice.txt
+          echo "---" >> /tmp/skip_notice.txt
+          echo "*このメッセージはClaude Codeによって自動生成されました*" >> /tmp/skip_notice.txt
 
           gh pr comment $PR_NUMBER --body-file /tmp/skip_notice.txt
 
@@ -202,9 +206,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          gh pr comment $PR_NUMBER --body "## Claude Code によるPRレビュー
+          cat > /tmp/no_changes_notice.txt << 'EOF'
+          ## Claude Code によるPRレビュー
 
           このPRには変更されたファイルがないため、自動レビューをスキップしました。
 
           ---
-          *このメッセージはClaude Codeによって自動生成されました*"
+          *このメッセージはClaude Codeによって自動生成されました*
+          EOF
+
+          gh pr comment $PR_NUMBER --body-file /tmp/no_changes_notice.txt

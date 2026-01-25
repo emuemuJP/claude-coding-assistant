@@ -38,7 +38,7 @@ jobs:
       - name: Install Claude Code CLI
         # バージョンを固定することで破壊的変更を防止
         # 最新バージョンは https://www.npmjs.com/package/@anthropic-ai/claude-code で確認
-        run: npm install -g @anthropic-ai/claude-code@1.0.3
+        run: npm install -g @anthropic-ai/claude-code@1.0.88
 
       - name: Get PR information
         env:

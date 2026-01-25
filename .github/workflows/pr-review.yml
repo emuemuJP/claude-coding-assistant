@@ -1,0 +1,221 @@
+name: PR Review with Claude
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# PRごとに1つのレビューのみ実行（新しいコミットがあれば前のをキャンセル）
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache npm packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-claude-cli
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install Claude Code CLI
+        # バージョンを固定することで破壊的変更を防止
+        # 最新バージョンは https://www.npmjs.com/package/@anthropic-ai/claude-code で確認
+        run: npm install -g @anthropic-ai/claude-code@1.0.88
+
+      - name: Get PR information
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # PR情報をファイルに安全に保存（シェルインジェクション対策）
+          gh pr view $PR_NUMBER --json title --jq '.title // ""' > /tmp/pr_title.txt
+          gh pr view $PR_NUMBER --json body --jq '.body // ""' > /tmp/pr_body.txt
+          gh pr diff $PR_NUMBER --name-only > /tmp/changed_files.txt
+          gh pr diff $PR_NUMBER > /tmp/pr_diff.txt
+
+      - name: Check diff size
+        id: check-size
+        run: |
+          # 差分のサイズをチェック（大規模PR対応）
+          DIFF_LINES=$(wc -l < /tmp/pr_diff.txt)
+          DIFF_SIZE=$(wc -c < /tmp/pr_diff.txt)
+          FILE_COUNT=$(wc -l < /tmp/changed_files.txt)
+
+          echo "diff_lines=$DIFF_LINES" >> $GITHUB_OUTPUT
+          echo "diff_size=$DIFF_SIZE" >> $GITHUB_OUTPUT
+          echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
+
+          # 変更ファイルがない場合はスキップ
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "::warning::No files changed in this PR"
+            echo "skip_review=true" >> $GITHUB_OUTPUT
+            echo "skip_reason=no_changes" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 差分が10000行または500KBを超える場合はスキップ
+          if [ "$DIFF_LINES" -gt 10000 ] || [ "$DIFF_SIZE" -gt 500000 ]; then
+            echo "skip_review=true" >> $GITHUB_OUTPUT
+            echo "skip_reason=too_large" >> $GITHUB_OUTPUT
+            echo "::warning::PR diff is too large (${DIFF_LINES} lines, ${DIFF_SIZE} bytes). Skipping automated review."
+          else
+            echo "skip_review=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create review prompt
+        if: steps.check-size.outputs.skip_review == 'false'
+        run: |
+          cat > /tmp/review_prompt.txt << 'PROMPT_EOF'
+          あなたは経験豊富なシニアエンジニアです。以下のPRをレビューしてください。
+
+          ## レビュー観点
+          - **機能性**: 実装が要件を満たしているか
+          - **可読性**: コードが理解しやすいか、命名は適切か
+          - **保守性**: 将来の変更に対して柔軟性があるか
+          - **パフォーマンス**: 効率的な実装になっているか
+          - **セキュリティ**: セキュリティリスクはないか
+
+          ## 重要度の判定基準
+          - **【必須】**: セキュリティ、バグ、データ損失リスク
+          - **【推奨】**: パフォーマンス、保守性、可読性の大幅改善
+          - **【提案】**: より良い実装方法の提案
+
+          ## 出力形式
+          以下の形式でレビュー結果を出力してください（Markdown形式）:
+
+          ### レビューサマリー
+          - 全体評価: [良好/要改善/要修正]
+          - 重要な問題: X件
+          - 推奨改善: Y件
+
+          ### 良い点
+          - （あれば記載）
+
+          ### 指摘事項
+          1. 【重要度】ファイル名:行番号 - 問題の説明
+             - 改善提案: ...
+
+          ### 総評
+          （簡潔なまとめ）
+          PROMPT_EOF
+
+      - name: Run PR Review
+        if: steps.check-size.outputs.skip_review == 'false'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # プロンプトファイルを組み立て（シェル変数展開を避ける）
+          {
+            cat /tmp/review_prompt.txt
+            echo ""
+            echo "## PR情報"
+            echo "- タイトル:"
+            cat /tmp/pr_title.txt
+            echo ""
+            echo "- 説明:"
+            cat /tmp/pr_body.txt
+            echo ""
+            echo "## 変更ファイル"
+            cat /tmp/changed_files.txt
+            echo ""
+            echo "## 差分"
+            cat /tmp/pr_diff.txt
+          } > /tmp/full_prompt.txt
+
+          # Claude CLIでレビューを実行
+          # 環境変数に格納してからダブルクォートで渡すことで、
+          # ファイル内容の二重展開を防止（コマンドインジェクション対策）
+          PROMPT=$(cat /tmp/full_prompt.txt)
+          if ! claude --print "$PROMPT" > /tmp/review_result.txt 2>&1; then
+            echo "::error::Claude CLI failed to execute review"
+            echo "Error output:"
+            cat /tmp/review_result.txt
+            exit 1
+          fi
+
+          # 結果が空でないことを確認
+          if [ ! -s /tmp/review_result.txt ]; then
+            echo "::error::Review result is empty"
+            exit 1
+          fi
+
+      - name: Post review comment
+        if: steps.check-size.outputs.skip_review == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # コメント本文をファイルで作成（インジェクション対策）
+          {
+            echo "## Claude Code によるPRレビュー"
+            echo ""
+            cat /tmp/review_result.txt
+            echo ""
+            echo "---"
+            echo "*このレビューはClaude Codeによって自動生成されました*"
+          } > /tmp/comment_body.txt
+
+          # --body-file オプションで安全にコメント投稿
+          gh pr comment $PR_NUMBER --body-file /tmp/comment_body.txt
+
+      - name: Post skip notice (too large)
+        if: steps.check-size.outputs.skip_review == 'true' && steps.check-size.outputs.skip_reason == 'too_large'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DIFF_LINES: ${{ steps.check-size.outputs.diff_lines }}
+          DIFF_SIZE: ${{ steps.check-size.outputs.diff_size }}
+          FILE_COUNT: ${{ steps.check-size.outputs.file_count }}
+        run: |
+          cat > /tmp/skip_notice.txt << 'EOF'
+          ## Claude Code によるPRレビュー
+
+          このPRは差分が大きすぎるため、自動レビューをスキップしました。
+          EOF
+
+          echo "" >> /tmp/skip_notice.txt
+          echo "- 差分行数: ${DIFF_LINES}行（上限: 10,000行）" >> /tmp/skip_notice.txt
+          echo "- 差分サイズ: ${DIFF_SIZE}バイト（上限: 500KB）" >> /tmp/skip_notice.txt
+          echo "- 変更ファイル数: ${FILE_COUNT}ファイル" >> /tmp/skip_notice.txt
+          echo "" >> /tmp/skip_notice.txt
+          echo "手動でレビューを実行してください。" >> /tmp/skip_notice.txt
+          echo "" >> /tmp/skip_notice.txt
+          echo "---" >> /tmp/skip_notice.txt
+          echo "*このメッセージはClaude Codeによって自動生成されました*" >> /tmp/skip_notice.txt
+
+          gh pr comment $PR_NUMBER --body-file /tmp/skip_notice.txt
+
+      - name: Post skip notice (no changes)
+        if: steps.check-size.outputs.skip_review == 'true' && steps.check-size.outputs.skip_reason == 'no_changes'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          cat > /tmp/no_changes_notice.txt << 'EOF'
+          ## Claude Code によるPRレビュー
+
+          このPRには変更されたファイルがないため、自動レビューをスキップしました。
+
+          ---
+          *このメッセージはClaude Codeによって自動生成されました*
+          EOF
+
+          gh pr comment $PR_NUMBER --body-file /tmp/no_changes_notice.txt

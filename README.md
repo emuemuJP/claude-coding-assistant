@@ -129,6 +129,48 @@ claude-coding-assistant/
 
 ---
 
+## GitHub Actions による自動PRレビュー
+
+PRが作成されるたびに自動でClaudeによるレビューを実行できます。
+
+### セットアップ手順
+
+#### 1. Anthropic API Keyをシークレットに登録
+
+リポジトリの Settings > Secrets and variables > Actions で以下を追加:
+
+| シークレット名 | 値 |
+|--------------|-----|
+| `ANTHROPIC_API_KEY` | Anthropic APIキー |
+
+#### 2. ワークフローファイルをコピー
+
+`.github/workflows/pr-review.yml` をあなたのリポジトリにコピーしてください。
+
+```bash
+# リポジトリのルートで実行
+mkdir -p .github/workflows
+curl -o .github/workflows/pr-review.yml \
+  https://raw.githubusercontent.com/emuemuJP/claude-coding-assistant/main/.github/workflows/pr-review.yml
+```
+
+#### 3. 動作確認
+
+PRを作成すると、自動的にClaude Codeがレビューを実行し、コメントを投稿します。
+
+### カスタマイズ
+
+ワークフローファイル内のレビュープロンプトを編集することで、レビュー観点をカスタマイズできます。
+
+### 注意事項
+
+- **APIコスト**: PRごとにAnthropic APIが呼び出されます。大きなPRほどトークン消費が増えます
+- **タイムアウト**: デフォルトのGitHub Actionsタイムアウトは6時間です
+- **大規模PR**: 10,000行または500KBを超える差分は自動レビューがスキップされます
+- **フォークからのPR**: パブリックリポジトリでは、フォークからのPRでシークレットにアクセスできません。`pull_request_target`イベントは**使用しないでください**（悪意あるPRから任意コード実行のリスクがあります）。代わりに、メンテナーによる手動レビューまたはラベルベースのトリガーを検討してください
+
+---
+
 ## 📄 ライセンス
 
 MIT License

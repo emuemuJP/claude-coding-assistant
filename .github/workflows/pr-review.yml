@@ -1,0 +1,103 @@
+name: PR Review with Claude
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# PRごとに1つのレビューのみ実行（新しいコミットがあれば前のをキャンセル）
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run PR Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # PRの差分を取得
+          gh pr diff $PR_NUMBER > /tmp/pr_diff.txt
+
+          # PR情報を取得
+          PR_TITLE=$(gh pr view $PR_NUMBER --json title --jq .title)
+          PR_BODY=$(gh pr view $PR_NUMBER --json body --jq .body)
+          CHANGED_FILES=$(gh pr diff $PR_NUMBER --name-only)
+
+          # レビュープロンプトを作成
+          cat > /tmp/review_prompt.txt << 'PROMPT_EOF'
+          あなたは経験豊富なシニアエンジニアです。以下のPRをレビューしてください。
+
+          ## レビュー観点
+          - **機能性**: 実装が要件を満たしているか
+          - **可読性**: コードが理解しやすいか、命名は適切か
+          - **保守性**: 将来の変更に対して柔軟性があるか
+          - **パフォーマンス**: 効率的な実装になっているか
+          - **セキュリティ**: セキュリティリスクはないか
+
+          ## 重要度の判定基準
+          - **【必須】**: セキュリティ、バグ、データ損失リスク
+          - **【推奨】**: パフォーマンス、保守性、可読性の大幅改善
+          - **【提案】**: より良い実装方法の提案
+
+          ## 出力形式
+          以下の形式でレビュー結果を出力してください（Markdown形式）:
+
+          ### レビューサマリー
+          - 全体評価: [良好/要改善/要修正]
+          - 重要な問題: X件
+          - 推奨改善: Y件
+
+          ### 良い点
+          - （あれば記載）
+
+          ### 指摘事項
+          1. 【重要度】ファイル名:行番号 - 問題の説明
+             - 改善提案: ...
+
+          ### 総評
+          （簡潔なまとめ）
+          PROMPT_EOF
+
+          # Claude CLIでレビューを実行
+          REVIEW_RESULT=$(claude --print -p "
+          $(cat /tmp/review_prompt.txt)
+
+          ## PR情報
+          - タイトル: $PR_TITLE
+          - 説明: $PR_BODY
+
+          ## 変更ファイル
+          $CHANGED_FILES
+
+          ## 差分
+          $(cat /tmp/pr_diff.txt)
+          ")
+
+          # レビュー結果をPRにコメント
+          gh pr comment $PR_NUMBER --body "## Claude Code によるPRレビュー
+
+          $REVIEW_RESULT
+
+          ---
+          *このレビューはClaude Codeによって自動生成されました*"

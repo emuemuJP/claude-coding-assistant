@@ -51,6 +51,38 @@ jobs:
           gh pr diff $PR_NUMBER --name-only > /tmp/changed_files.txt
           gh pr diff $PR_NUMBER > /tmp/pr_diff.txt
 
+      - name: Get previous feedback tracker
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # 過去のClaudeレビューコメントからFEEDBACK_TRACKERを抽出
+          # 最新のClaudeコメントのみを対象にする
+          gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | contains("Claude Code によるPRレビュー")) | .body' \
+            | tail -1 > /tmp/last_claude_comment.txt || true
+
+          # FEEDBACK_TRACKERブロックを抽出
+          if grep -q "<!-- FEEDBACK_TRACKER" /tmp/last_claude_comment.txt 2>/dev/null; then
+            # トラッカー部分のみを抽出（pending状態のものだけ）
+            sed -n '/<!-- FEEDBACK_TRACKER/,/-->/p' /tmp/last_claude_comment.txt \
+              | grep "|pending" > /tmp/pending_feedback.txt || true
+
+            if [ -s /tmp/pending_feedback.txt ]; then
+              echo "Found pending feedback from previous review:"
+              cat /tmp/pending_feedback.txt
+              echo "has_pending_feedback=true" >> $GITHUB_OUTPUT
+            else
+              echo "No pending feedback found"
+              touch /tmp/pending_feedback.txt
+              echo "has_pending_feedback=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No previous feedback tracker found"
+            touch /tmp/pending_feedback.txt
+            echo "has_pending_feedback=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check diff size
         id: check-size
         run: |
@@ -98,6 +130,12 @@ jobs:
           - **【推奨】**: パフォーマンス、保守性、可読性の大幅改善
           - **【提案】**: より良い実装方法の提案
 
+          ## 前回レビューからの未対応指摘の確認
+          前回のレビューで指摘した未対応の項目がある場合は、以下を確認してください：
+          1. 今回の差分で対応されているか確認
+          2. 対応済みの場合は「resolved」としてマーク
+          3. 未対応の場合は「pending」のまま維持し、再度指摘
+
           ## 出力形式
           以下の形式でレビュー結果を出力してください（Markdown形式）:
 
@@ -105,16 +143,31 @@ jobs:
           - 全体評価: [良好/要改善/要修正]
           - 重要な問題: X件
           - 推奨改善: Y件
+          - 前回からの未対応: X件（該当する場合のみ）
+
+          ### 前回指摘の対応状況（該当する場合のみ）
+          - ✅ **対応済み**: [ID] 指摘内容の要約
+          - ⚠️ **未対応**: [ID] 指摘内容の要約 ← 対応をお願いします
 
           ### 良い点
           - （あれば記載）
 
           ### 指摘事項
-          1. 【重要度】ファイル名:行番号 - 問題の説明
+          各指摘には一意のIDを付与してください（例: SEC001, PERF002, READ003）
+          1. 【重要度】[ID] ファイル名:行番号 - 問題の説明
              - 改善提案: ...
 
           ### 総評
           （簡潔なまとめ）
+
+          ---
+          重要: レビューの最後に、以下の形式でフィードバックトラッカーを出力してください。
+          これは次回レビュー時の追跡に使用されます。各行は1つの指摘を表します。
+
+          <!-- FEEDBACK_TRACKER
+          ID|重要度|指摘内容の短い要約(50文字以内)|状態(pending/resolved)
+          例: SEC001|critical|SQLインジェクション脆弱性(user.ts:45)|pending
+          -->
           PROMPT_EOF
 
       - name: Run PR Review
@@ -126,6 +179,19 @@ jobs:
           {
             cat /tmp/review_prompt.txt
             echo ""
+
+            # 前回の未対応指摘がある場合は追加
+            if [ -s /tmp/pending_feedback.txt ]; then
+              echo "## 前回レビューからの未対応指摘"
+              echo "以下の指摘が前回のレビューで挙げられましたが、まだ対応されていません。"
+              echo "今回の差分で対応されているか確認し、対応状況を更新してください。"
+              echo ""
+              echo '```'
+              cat /tmp/pending_feedback.txt
+              echo '```'
+              echo ""
+            fi
+
             echo "## PR情報"
             echo "- タイトル:"
             cat /tmp/pr_title.txt

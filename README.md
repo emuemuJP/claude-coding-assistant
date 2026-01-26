@@ -104,6 +104,10 @@ README等の技術文章の品質をレビュー（4つのCの観点）：
 
 ```
 claude-coding-assistant/
+├── .github/
+│   ├── workflows/
+│   │   └── pr-review.yml    # 自動PRレビューワークフロー
+│   └── copilot-instructions.md  # GitHub Copilotレビュー設定
 ├── .claude-plugin/
 │   ├── plugin.json          # プラグイン設定（MCP設定含む）
 │   └── marketplace.json     # マーケットプレイス設定
@@ -131,19 +135,46 @@ claude-coding-assistant/
 
 ## GitHub Actions による自動PRレビュー
 
-PRが作成されるたびに自動でClaudeによるレビューを実行できます。
+PRが作成されるたびに自動でレビューを実行できます。**GitHub Copilot**と**Claude Code**から選択可能です。
+
+### レビュワーの選択
+
+PRラベルでレビュワーを切り替えられます:
+
+| ラベル | レビュワー | 特徴 |
+|--------|-----------|------|
+| （なし） | **GitHub Copilot**（デフォルト） | 高速・低コスト、標準的なレビュー |
+| `review:claude` | **Claude Code** | 詳細な分析、カスタム観点での深いレビュー |
+| `review:skip` | スキップ | 自動レビューを実行しない |
+
+#### 各レビュワーの比較
+
+| 観点 | GitHub Copilot | Claude Code |
+|------|---------------|-------------|
+| コスト | Copilotライセンスに含まれる | API従量課金 |
+| レビュー速度 | 高速 | やや遅い |
+| カスタマイズ | `copilot-instructions.md` | プロンプトで自由に定義 |
+| 詳細度 | 標準的 | 詳細（重要度区分付き） |
+| 推奨用途 | 日常的なPR、軽微な変更 | 重要な機能追加、セキュリティ関連 |
 
 ### セットアップ手順
 
-#### 1. Anthropic API Keyをシークレットに登録
+#### 1. GitHub Copilot Code Reviewを有効化（推奨）
 
-リポジトリの Settings > Secrets and variables > Actions で以下を追加:
+1. リポジトリの **Settings > General > Features** で **Copilot** を有効化
+2. **Settings > Code review > Copilot** でCode Reviewを有効化
+
+詳細: [GitHub Copilot Code Review ドキュメント](https://docs.github.com/copilot/using-github-copilot/code-review/using-copilot-code-review)
+
+#### 2. Anthropic API Keyをシークレットに登録（Claude使用時のみ）
+
+`review:claude` ラベルでClaudeを使用する場合は、リポジトリの Settings > Secrets and variables > Actions で以下を追加:
 
 | シークレット名 | 値 |
 |--------------|-----|
 | `ANTHROPIC_API_KEY` | Anthropic APIキー |
 
-#### 2. ワークフローファイルをコピー
+#### 3. ワークフローファイルをコピー
 
 `.github/workflows/pr-review.yml` をあなたのリポジトリにコピーしてください。
 
@@ -162,11 +193,22 @@ PRを作成すると、自動的にClaude Codeがレビューを実行し、コ�
 
 ワークフローファイル内のレビュープロンプトを編集することで、レビュー観点をカスタマイズできます。
 
+### ラベルの作成
+
+以下のラベルをリポジトリに作成してください:
+
+```bash
+# GitHub CLIを使用
+gh label create "review:claude" --description "Claude Codeでレビュー" --color "8B5CF6"
+gh label create "review:skip" --description "自動レビューをスキップ" --color "6B7280"
+```
+
 ### 注意事項
 
-- **APIコスト**: PRごとにAnthropic APIが呼び出されます。大きなPRほどトークン消費が増えます
+- **Copilotライセンス**: GitHub Copilotを使用するには、組織またはユーザーにCopilotライセンスが必要です
+- **APIコスト（Claude使用時）**: PRごとにAnthropic APIが呼び出されます。大きなPRほどトークン消費が増えます
 - **タイムアウト**: デフォルトのGitHub Actionsタイムアウトは6時間です
-- **大規模PR**: 10,000行または500KBを超える差分は自動レビューがスキップされます
+- **大規模PR（Claude使用時）**: 10,000行または500KBを超える差分は自動レビューがスキップされます
 - **フォークからのPR**: パブリックリポジトリでは、フォークからのPRでシークレットにアクセスできません。`pull_request_target`イベントは**使用しないでください**（悪意あるPRから任意コード実行のリスクがあります）。代わりに、メンテナーによる手動レビューまたはラベルベースのトリガーを検討してください
 
 ---

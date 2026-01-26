@@ -1,8 +1,8 @@
-name: PR Review with Claude
+name: PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
 
 # PRごとに1つのレビューのみ実行（新しいコミットがあれば前のをキャンセル）
 concurrency:
@@ -10,7 +10,76 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review:
+  # レビュワーの選択を決定
+  determine-reviewer:
+    runs-on: ubuntu-latest
+    outputs:
+      reviewer: ${{ steps.check-labels.outputs.reviewer }}
+    steps:
+      - name: Check labels for reviewer selection
+        id: check-labels
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          echo "Labels: $LABELS"
+
+          # ラベルをチェック
+          if echo "$LABELS" | grep -q '"review:skip"'; then
+            echo "reviewer=skip" >> $GITHUB_OUTPUT
+            echo "::notice::Review skipped by label"
+          elif echo "$LABELS" | grep -q '"review:claude"'; then
+            echo "reviewer=claude" >> $GITHUB_OUTPUT
+            echo "::notice::Claude Code selected as reviewer"
+          else
+            # デフォルト: GitHub Copilot
+            echo "reviewer=copilot" >> $GITHUB_OUTPUT
+            echo "::notice::GitHub Copilot selected as reviewer (default)"
+          fi
+
+  # GitHub Copilot によるレビュー
+  copilot-review:
+    needs: determine-reviewer
+    if: needs.determine-reviewer.outputs.reviewer == 'copilot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Request Copilot review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # GitHub Copilotをレビュワーとしてリクエスト
+          # 注意: Copilotのレビューはリポジトリ設定で有効化されている必要があります
+          gh pr edit $PR_NUMBER --repo ${{ github.repository }} --add-reviewer "@copilot" || true
+
+          echo "::notice::GitHub Copilot has been requested as a reviewer"
+
+      - name: Post notice comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          cat > /tmp/notice.txt << 'EOF'
+          ## レビュワー: GitHub Copilot
+
+          GitHub Copilotによる自動レビューをリクエストしました。
+
+          > **レビュワーを変更するには:**
+          > - `review:claude` ラベルを追加 → Claude Codeによる詳細レビュー
+          > - `review:skip` ラベルを追加 → 自動レビューをスキップ
+
+          ---
+          *このメッセージは自動生成されました*
+          EOF
+
+          gh pr comment $PR_NUMBER --repo ${{ github.repository }} --body-file /tmp/notice.txt
+
+  # Claude Code によるレビュー
+  claude-review:
+    needs: determine-reviewer
+    if: needs.determine-reviewer.outputs.reviewer == 'claude'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -165,11 +234,15 @@ jobs:
         run: |
           # コメント本文をファイルで作成（インジェクション対策）
           {
-            echo "## Claude Code によるPRレビュー"
+            echo "## レビュワー: Claude Code"
             echo ""
             cat /tmp/review_result.txt
             echo ""
             echo "---"
+            echo "> **レビュワーを変更するには:**"
+            echo "> - \`review:claude\` ラベルを削除 → GitHub Copilotに切り替え"
+            echo "> - \`review:skip\` ラベルを追加 → 自動レビューをスキップ"
+            echo ""
             echo "*このレビューはClaude Codeによって自動生成されました*"
           } > /tmp/comment_body.txt
 
@@ -186,7 +259,7 @@ jobs:
           FILE_COUNT: ${{ steps.check-size.outputs.file_count }}
         run: |
           cat > /tmp/skip_notice.txt << 'EOF'
-          ## Claude Code によるPRレビュー
+          ## レビュワー: Claude Code
 
           このPRは差分が大きすぎるため、自動レビューをスキップしました。
           EOF
@@ -210,7 +283,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           cat > /tmp/no_changes_notice.txt << 'EOF'
-          ## Claude Code によるPRレビュー
+          ## レビュワー: Claude Code
 
           このPRには変更されたファイルがないため、自動レビューをスキップしました。
 
@@ -219,3 +292,31 @@ jobs:
           EOF
 
           gh pr comment $PR_NUMBER --body-file /tmp/no_changes_notice.txt
+
+  # スキップ通知
+  skip-review:
+    needs: determine-reviewer
+    if: needs.determine-reviewer.outputs.reviewer == 'skip'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post skip notice
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          cat > /tmp/skip_notice.txt << 'EOF'
+          ## 自動レビュースキップ
+
+          `review:skip` ラベルが設定されているため、自動レビューをスキップしました。
+
+          > **レビュワーを変更するには:**
+          > - `review:skip` ラベルを削除 → GitHub Copilotでレビュー（デフォルト）
+          > - `review:claude` ラベルを追加 → Claude Codeでレビュー
+
+          ---
+          *このメッセージは自動生成されました*
+          EOF
+
+          gh pr comment $PR_NUMBER --repo ${{ github.repository }} --body-file /tmp/skip_notice.txt

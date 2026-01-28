@@ -72,13 +72,91 @@ README等の技術文章の品質をレビュー（4つのCの観点）：
 
 ### 前提条件
 - GitHub CLI（gh）がインストール・認証済みであること
-- codex MCPサーバが利用可能な場合、より高品質なレビューが可能
+- **Codex 連携（オプション）**: Codex MCP サーバが利用可能な場合、マルチエージェント検証により高品質なレビューが可能（セットアップ方法は後述の「Codex MCP サーバー設定」を参照）
 
 ---
 
-## 🔧 MCP サーバー設定
+## 🔧 Codex MCP サーバー設定
 
-このプラグインはCodex MCPサーバを使用します。設定は`.claude-plugin/plugin.json`に含まれています。
+このプラグインは [OpenAI Codex CLI](https://github.com/openai/codex) の MCP サーバー機能を使用し、マルチエージェントレビュー（Claude + Codex による二重検証）を実現します。Codex が利用できない場合でも、Claude 単体でレビューは正常に動作します（Codex 検証はオプション機能）。
+
+### Codex とは
+
+[OpenAI Codex CLI](https://github.com/openai/codex) は、OpenAI が提供するオープンソースのコーディングエージェントです。ターミナル上で動作し、コードの読み書き・実行が可能です。このプラグインでは、Codex を **MCP（Model Context Protocol）サーバー** として起動し、Claude からのレビュー検証リクエストに応答させます。
+
+### セットアップ手順
+
+#### 1. Codex CLI のインストール
+
+以下のいずれかの方法でインストールしてください。
+
+```bash
+# 方法1: npm（推奨）
+npm install -g @openai/codex
+
+# 方法2: Homebrew（macOS）
+brew install --cask codex
+
+# 方法3: GitHub Releases からバイナリをダウンロード
+# https://github.com/openai/codex/releases
+# ダウンロード後、バイナリを PATH の通ったディレクトリに配置
+```
+
+インストール確認:
+```bash
+codex --version
+# codex-mcp-server バイナリも同梱されていることを確認
+codex-mcp-server --help
+```
+
+#### 2. OpenAI API キーの設定
+
+Codex の動作には OpenAI API キーが必要です。
+
+**方法A: ChatGPT アカウントでログイン（Plus/Pro/Team/Edu/Enterprise プランの場合、追加コスト不要）**
+```bash
+codex
+# 起動後、"Sign in with ChatGPT" を選択してブラウザ認証
+```
+
+**方法B: API キーを直接設定**
+```bash
+# 環境変数として設定
+export OPENAI_API_KEY="sk-your-api-key-here"
+
+# または Codex CLI にログイン
+printenv OPENAI_API_KEY | codex login --with-api-key
+```
+
+API キーは [OpenAI Platform](https://platform.openai.com/api-keys) で取得できます。
+
+#### 3. Codex 動作確認
+
+```bash
+# 対話モードで起動テスト
+codex
+
+# 非対話モード（CI/CD向け）で簡単なテスト
+codex exec "echo hello"
+```
+
+#### 4. MCP サーバーの動作確認
+
+```bash
+# codex-mcp-server が起動するか確認（Ctrl+C で終了）
+codex-mcp-server
+```
+
+`codex-mcp-server` は `codex` CLI に同梱されるバイナリで、Codex エージェントを MCP ツールとして外部から利用可能にします。JSON-RPC 2.0 over stdin/stdout で通信し、以下の 2 つの MCP ツールを公開します:
+
+| ツール名 | 説明 |
+|---------|------|
+| `codex` | 新しい Codex セッションを開始 |
+| `codex-reply` | 既存のセッションに続けてメッセージを送信 |
+
+#### 5. プラグインの MCP 設定
+
+プラグインの MCP サーバー設定は `.claude-plugin/plugin.json` に含まれています:
 
 ```json
 {
@@ -86,17 +164,34 @@ README等の技術文章の品質をレビュー（4つのCの観点）：
   "mcpServers": {
     "codex": {
       "type": "stdio",
-      "command": "codex",
-      "args": ["mcp-server"]
+      "command": "codex-mcp-server",
+      "args": []
     }
   }
 }
 ```
 
-### 前提条件
-- `codex`コマンドがインストール済みであること
-- インストール方法: [Codex公式ドキュメント](https://docs.codexmcp.dev/)
-- プラグインのMCPサーバーを有効にするには **Claude Codeの再起動が必要** です
+#### 6. Claude Code の再起動
+
+プラグインの MCP サーバーを有効にするには **Claude Code の再起動が必要** です。
+
+### トラブルシューティング
+
+| 症状 | 原因 | 対処法 |
+|------|------|--------|
+| `codex: command not found` | Codex CLI 未インストール | `npm install -g @openai/codex` を実行 |
+| `codex-mcp-server: command not found` | npm 版に未同梱の場合あり | [GitHub Releases](https://github.com/openai/codex/releases) からバイナリを取得 |
+| Codex テストで 60 秒以上応答なし | API キー未設定 or ネットワーク問題 | `OPENAI_API_KEY` が設定済みか確認。`codex exec "hello"` で単体テスト |
+| MCP サーバー接続失敗 | Claude Code 未再起動 | Claude Code を再起動 |
+| レビュー中に Codex 検証がスキップされる | Codex MCP が利用不可 | 上記手順で Codex の動作を確認。レビュー自体は Claude 単体で正常動作 |
+
+### 公式ドキュメント
+
+- [Codex CLI 概要](https://developers.openai.com/codex/cli/)
+- [Codex クイックスタート](https://developers.openai.com/codex/quickstart/)
+- [Codex MCP 設定](https://developers.openai.com/codex/mcp/)
+- [Codex 設定リファレンス](https://developers.openai.com/codex/config-reference/)
+- [Codex GitHub リポジトリ](https://github.com/openai/codex)
 
 ---
 
@@ -108,6 +203,7 @@ claude-coding-assistant/
 │   ├── plugin.json          # プラグイン設定（MCP設定含む）
 │   └── marketplace.json     # マーケットプレイス設定
 ├── commands/
+│   ├── pr-reviewer.md       # PR一括レビューコマンド定義（統合）
 │   ├── code-reviewer.md     # コードレビューコマンド定義
 │   ├── pr-description-reviewer.md  # PR記載レビューコマンド定義
 │   └── doc-reviewer.md      # 技術文章レビューコマンド定義
